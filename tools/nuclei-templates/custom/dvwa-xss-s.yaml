@@ -1,0 +1,25 @@
+id: DVWA-XSS-Stored-Auth-Detect
+
+info:
+  name: DVWA - XSS (Stored) (xss_s) - Detection
+  author: ai_vuln_scanner
+  severity: medium
+  description: |
+    登录 DVWA、设置安全等级为 low，然后验证 Stored XSS（xss_s）模块页面的漏洞提示文本。
+  tags: dvwa,xss,stored,detect
+
+variables:
+  dvwa_cookie: ""
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/vulnerabilities/xss_s/"
+    headers:
+      Cookie: "{{dvwa_cookie}}"
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "Stored Cross Site Script"
+

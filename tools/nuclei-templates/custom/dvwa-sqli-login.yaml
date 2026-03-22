@@ -1,0 +1,28 @@
+id: DVWA-SQLI-LOGIN-DETECT
+
+info:
+  name: DVWA - SQL Injection (auth required) - Detection
+  author: ai_vuln_scanner
+  severity: high
+  description: |
+    Logs into DVWA with default credentials and checks for SQLi error-based behavior
+    on the SQL Injection module (detection only).
+  tags: dvwa,sqli,detect
+
+variables:
+  dvwa_cookie: ""
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/vulnerabilities/sqli/?id=1%27&Submit=Submit"
+    headers:
+      Cookie: "{{dvwa_cookie}}"
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "You have an error in your SQL syntax"
+          - "mysql_fetch"
+          - "SQL syntax"
+        condition: or

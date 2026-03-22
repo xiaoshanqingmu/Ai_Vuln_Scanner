@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>渗透测试报告 - {{ task.task_id }}</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 12px;
+      color: #333333;
+      margin: 24px;
+    }
+    h1, h2, h3, h4 {
+      color: #1f2933;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .header h1 {
+      font-size: 22px;
+      margin-bottom: 4px;
+    }
+    .header h2 {
+      font-size: 14px;
+      color: #666666;
+      margin-top: 0;
+    }
+    .section {
+      margin-bottom: 20px;
+      page-break-inside: avoid;
+    }
+    .section-title {
+      font-size: 14px;
+      font-weight: bold;
+      border-left: 4px solid #2563eb;
+      padding-left: 8px;
+      margin-bottom: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 12px;
+      table-layout: fixed;
+    }
+    th, td {
+      border: 1px solid #dddddd;
+      padding: 4px 6px;
+      vertical-align: top;
+      word-wrap: break-word;
+    }
+    th {
+      background-color: #f3f4f6;
+      font-weight: bold;
+      text-align: left;
+    }
+    .risk-high {
+      background-color: #fecaca;
+    }
+    .risk-medium {
+      background-color: #fef3c7;
+    }
+    .risk-low {
+      background-color: #dcfce7;
+    }
+    .risk-info {
+      background-color: #e5e7eb;
+    }
+    .small-text {
+      font-size: 10px;
+      color: #6b7280;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      background-color: #111827;
+      color: #ffffff;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>渗透测试报告</h1>
+    <h2>任务 ID：{{ task.task_id }} ｜ 目标：{{ task.domain }}</h2>
+    <div class="small-text">
+      报告生成时间：{{ generated_at }}
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">一、项目概述</div>
+    <p>
+      本报告基于对公网授权靶场目标 <strong>{{ task.domain }}</strong> 的安全测试任务生成，
+      旨在帮助相关技术团队识别与理解潜在安全风险，并为后续防御建设提供参考。
+    </p>
+    <p class="small-text">
+      说明：本报告仅针对本次任务下收集到的 URL 与触达的攻击面，不代表目标系统的全部安全状况。
+    </p>
+  </div>
+
+  <div class="section">
+    <div class="section-title">二、扫描环境与配置</div>
+    <table>
+      <tr>
+        <th>任务 ID</th>
+        <td>{{ task.task_id }}</td>
+      </tr>
+      <tr>
+        <th>目标地址</th>
+        <td>{{ task.domain }}</td>
+      </tr>
+      <tr>
+        <th>创建时间</th>
+        <td>{{ task.create_time.strftime("%Y-%m-%d %H:%M:%S") if task.create_time else "" }}</td>
+      </tr>
+      <tr>
+        <th>完成时间</th>
+        <td>{{ task.finish_time.strftime("%Y-%m-%d %H:%M:%S") if task.finish_time else "（进行中或未记录）" }}</td>
+      </tr>
+      <tr>
+        <th>扫描工具</th>
+        <td>OWASP ZAP、nuclei 以及 URL 收集工具 gau</td>
+      </tr>
+      <tr>
+        <th>AI 分析</th>
+        <td>通义千问（适配公网授权靶场场景，仅输出 PoC 思路与修复建议）</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">三、漏洞统计概览</div>
+    <table>
+      <tr>
+        <th>总漏洞数</th>
+        <th>高危</th>
+        <th>中危</th>
+        <th>低危</th>
+        <th>信息</th>
+      </tr>
+      <tr>
+        <td>{{ total }}</td>
+        <td>{{ stats.high }}</td>
+        <td>{{ stats.medium }}</td>
+        <td>{{ stats.low }}</td>
+        <td>{{ stats.info }}</td>
+      </tr>
+    </table>
+    <p class="small-text">
+      说明：风险等级基于扫描工具与统一映射规则，实际风险需结合业务价值综合判断。
+    </p>
+  </div>
+
+  <div class="section">
+    <div class="section-title">四、漏洞详情列表</div>
+    {% for v in vulns %}
+    {% set r = (v.risk_level or 'info').lower() %}
+    {% set risk_class = 'risk-info' %}
+    {% if r == 'high' %}{% set risk_class = 'risk-high' %}{% elif r == 'medium' %}{% set risk_class = 'risk-medium' %}
+    {% elif r == 'low' %}{% set risk_class = 'risk-low' %}{% endif %}
+
+    <table>
+      <tr>
+        <th colspan="4" class="{{ risk_class }}">
+          [{{ v.risk_level|upper }}] {{ v.vuln_name }} （ID: {{ v.id }}）
+        </th>
+      </tr>
+      <tr>
+        <th style="width: 18%;">URL（含端口）</th>
+        <td colspan="3">{{ v.url }}</td>
+      </tr>
+      <tr>
+        <th>参数</th>
+        <td style="width: 32%;">{{ v.param or "（未识别）" }}</td>
+        <th style="width: 18%;">扫描工具</th>
+        <td>{{ v.tool }}</td>
+      </tr>
+      <tr>
+        <th>工具描述</th>
+        <td colspan="3">{{ v.description or "（扫描工具未提供详细描述）" }}</td>
+      </tr>
+      <tr>
+        <th>AI 攻击原理分析</th>
+        <td colspan="3">
+          {% if v.attack_principle %}
+            {{ v.attack_principle }}
+          {% else %}
+            （尚未生成 AI 攻击原理分析）
+          {% endif %}
+          <div class="small-text">
+            注：本分析结果已适配公网授权靶场场景，仅用于教学和防御研究，禁止用于未授权目标。
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <th>AI PoC 建议（思路）</th>
+        <td colspan="3">
+          {% if v.poc_suggestion %}
+            {{ v.poc_suggestion }}
+          {% else %}
+            （尚未生成 AI PoC 思路建议）
+          {% endif %}
+          <div class="small-text">
+            注：不包含任何可直接复制执行的完整攻击代码，仅提供测试与验证思路。
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <th>AI 定制化修复建议</th>
+        <td colspan="3">
+          {% if v.custom_fix %}
+            {{ v.custom_fix }}
+          {% else %}
+            （尚未生成 AI 修复建议，可参考通用安全加固基线）
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>AI 攻击链风险评估</th>
+        <td colspan="3">
+          {% if v.attack_chain_risk %}
+            {{ v.attack_chain_risk }}
+          {% else %}
+            （尚未生成攻击链评估，建议结合整体漏洞分布与业务架构进行人工分析）
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>发现时间</th>
+        <td colspan="3">{{ v.create_time.strftime("%Y-%m-%d %H:%M:%S") if v.create_time else "" }}</td>
+      </tr>
+    </table>
+    {% if not loop.last %}
+    <div style="height: 10px;"></div>
+    {% endif %}
+    {% endfor %}
+  </div>
+
+  <div class="section">
+    <div class="section-title">五、总体修复建议</div>
+    <p>
+      建议优先处理高危与可直接导致数据泄露、远程代码执行（RCE）、认证绕过等严重影响的漏洞，
+      同时结合业务优先级制定分阶段整改计划。
+    </p>
+    <ul>
+      <li>针对输入校验与输出编码问题，建立统一的安全编码规范与组件；</li>
+      <li>针对身份认证与访问控制问题，梳理最小权限模型并强化日志审计；</li>
+      <li>针对上传、文件访问等高危接口，增加隔离与内容检测机制；</li>
+      <li>定期对授权靶场与测试环境进行自动化扫描与人工验证，持续跟进修复效果。</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <div class="section-title">六、合规声明</div>
+    <p>
+      本报告仅基于对 <strong>{{ task.domain }}</strong> 等
+      <span class="badge">公网授权靶场</span>
+      目标的安全测试结果生成，仅用于安全教学、研究与防御能力建设目的。
+    </p>
+    <p>
+      严禁将报告中的任何技术细节、分析结论或 PoC 思路用于对未取得授权的真实业务系统、第三方服务或个人网站的测试或攻击。
+      如因违反上述约定产生任何法律责任或损失，均由使用者自行承担。
+    </p>
+  </div>
+</body>
+</html>
+

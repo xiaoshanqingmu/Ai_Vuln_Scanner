@@ -1,0 +1,82 @@
+2026-03-19 21:37:20,608 [INFO] [scan] async_task.py:182 - 同步扫描开始: task_id=6e7e8969faaf41d086efb2baa7005d90 domain=http://127.0.0.1:7777/vulnerabilities/sqli
+2026-03-19 21:37:20,620 [INFO] [scan] async_task.py:44 - 任务状态更新: task_id=6e7e8969faaf41d086efb2baa7005d90 status=scanning
+2026-03-19 21:37:20,620 [INFO] [scan] url_collector.py:70 - 构建 gau 命令: 'D:\Ai_Vuln_Scanner\tools\gau.exe' 127.0.0.1:7777 --subs
+2026-03-19 21:37:20,625 [INFO] [scan] url_collector.py:94 - 开始执行 gau（第 1 次尝试）: target=http://127.0.0.1:7777/vulnerabilities/sqli
+2026-03-19 21:37:53,273 [INFO] [scan] url_collector.py:127 - gau 执行成功，收集到原始 URL 数量: 0
+2026-03-19 21:37:53,275 [WARNING] [scan] url_collector.py:267 - gau 未返回有效 URL（ok=True, count=2），使用基础 URL 降级列表: ['http://127.0.0.1:7777/vulnerabilities/sqli', 'https://127.0.0.1:7777/vulnerabilities/sqli']
+2026-03-19 21:37:53,277 [INFO] [scan] url_collector.py:219 - URL 过滤完成：原始=2 去重+过滤后=2
+2026-03-19 21:37:53,277 [INFO] [scan] async_task.py:194 - URL 收集完成: task_id=6e7e8969faaf41d086efb2baa7005d90 url_count=2
+2026-03-19 21:38:10,568 [INFO] [scan] vuln_scanner.py:551 - 双引擎扫描开始: task_id=6e7e8969faaf41d086efb2baa7005d90 urls=2
+2026-03-19 21:38:10,577 [INFO] [scan] vuln_scanner.py:429 - nuclei 扫描开始: urls=2 ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 Edg/116.0.1938.69 proxy=none
+2026-03-19 21:38:55,228 [INFO] [scan] vuln_scanner.py:492 - nuclei 扫描结束: vuln_count=0 elapsed_s=44.65
+2026-03-19 21:39:06,498 [ERROR] [scan] vuln_scanner.py:230 - ZAP 服务不可用: HTTPConnectionPool(host='127.0.0.1', port=8080): Max retries exceeded with url: http://zap/JSON/core/view/version/?apikey=96lr8a8ujkh6ncad62qemko3db (Caused by ProxyError('Unable to connect to proxy', RemoteDisconnected('Remote end closed connection without response')))
+Traceback (most recent call last):
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+               ^^^^^^^^^^^^^^^^^^^
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\urllib3\connectionpool.py", line 534, in _make_request
+    response = conn.getresponse()
+               ^^^^^^^^^^^^^^^^^^
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\urllib3\connection.py", line 571, in getresponse
+    httplib_response = super().getresponse()
+                       ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Python\Lib\http\client.py", line 1374, in getresponse
+    response.begin()
+  File "D:\Python\Lib\http\client.py", line 318, in begin
+    version, status, reason = self._read_status()
+                              ^^^^^^^^^^^^^^^^^^^
+  File "D:\Python\Lib\http\client.py", line 287, in _read_status
+    raise RemoteDisconnected("Remote end closed connection without"
+http.client.RemoteDisconnected: Remote end closed connection without response
+
+The above exception was the direct cause of the following exception:
+
+urllib3.exceptions.ProxyError: ('Unable to connect to proxy', RemoteDisconnected('Remote end closed connection without response'))
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\requests\adapters.py", line 486, in send
+    resp = conn.urlopen(
+           ^^^^^^^^^^^^^
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\urllib3\connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+              ^^^^^^^^^^^^^^^^^^
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\urllib3\util\retry.py", line 535, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.MaxRetryError: HTTPConnectionPool(host='127.0.0.1', port=8080): Max retries exceeded with url: http://zap/JSON/core/view/version/?apikey=96lr8a8ujkh6ncad62qemko3db (Caused by ProxyError('Unable to connect to proxy', RemoteDisconnected('Remote end closed connection without response')))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\Ai_Vuln_Scanner\core\vuln_scanner.py", line 227, in _ensure_zap_ready
+    _ = self.zap.core.version
+        ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\zapv2\core.py", line 108, in version
+    return six.next(six.itervalues(self.zap._request(self.zap.base + 'core/view/version/')))
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\zapv2\__init__.py", line 200, in _request
+    data = self._request_api(url, get)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\zapv2\__init__.py", line 180, in _request_api
+    response = self.session.get(url, params=query, proxies=self.__proxies, verify=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\requests\sessions.py", line 602, in get
+    return self.request("GET", url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\requests\sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\requests\sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Ai_Vuln_Scanner\.venv\Lib\site-packages\requests\adapters.py", line 513, in send
+    raise ProxyError(e, request=request)
+requests.exceptions.ProxyError: HTTPConnectionPool(host='127.0.0.1', port=8080): Max retries exceeded with url: http://zap/JSON/core/view/version/?apikey=96lr8a8ujkh6ncad62qemko3db (Caused by ProxyError('Unable to connect to proxy', RemoteDisconnected('Remote end closed connection without response')))
+2026-03-19 21:39:06,510 [WARNING] [scan] vuln_scanner.py:246 - ZAP 未就绪，将跳过 ZAP 扫描: ZAP 服务未启动或 API 不可用
+2026-03-19 21:39:06,510 [INFO] [scan] vuln_scanner.py:626 - 双引擎扫描结束: task_id=6e7e8969faaf41d086efb2baa7005d90 nuclei=0 zap=0 total=0 elapsed_s=55.94
+2026-03-19 21:39:06,510 [INFO] [scan] async_task.py:211 - 漏洞扫描结果: task_id=6e7e8969faaf41d086efb2baa7005d90 ok=True summary={'nuclei': 0, 'zap': 0, 'total': 0}
+2026-03-19 21:39:06,520 [INFO] [scan] async_task.py:44 - 任务状态更新: task_id=6e7e8969faaf41d086efb2baa7005d90 status=analyzing
+2026-03-19 21:39:06,657 [INFO] [scan] async_task.py:44 - 任务状态更新: task_id=6e7e8969faaf41d086efb2baa7005d90 status=success
+2026-03-19 21:39:06,657 [INFO] [scan] async_task.py:234 - 同步扫描完成: task_id=6e7e8969faaf41d086efb2baa7005d90

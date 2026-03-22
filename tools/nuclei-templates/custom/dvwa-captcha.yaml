@@ -1,0 +1,25 @@
+id: DVWA-Captcha-Auth-Detect
+
+info:
+  name: DVWA - Insecure CAPTCHA (captcha) - Detection
+  author: ai_vuln_scanner
+  severity: medium
+  description: |
+    登录 DVWA、设置安全等级为 low，然后验证 Insecure CAPTCHA（captcha）模块页面的漏洞提示文本。
+  tags: dvwa,captcha,detect
+
+variables:
+  dvwa_cookie: ""
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/vulnerabilities/captcha/"
+    headers:
+      Cookie: "{{dvwa_cookie}}"
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "Insecure CAPTCHA"
+

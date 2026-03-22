@@ -1,0 +1,32 @@
+id: DVWA-XSS-DOM-COOKIE
+
+info:
+  name: DVWA - DOM XSS (xss_d) - Cookie Only Detection
+  author: ai_vuln_scanner
+  severity: medium
+  description: |
+    使用外部提供的 DVWA Cookie 绕过登录流程。
+    适用于 nuclei 仅凭 HTTP 响应无法稳定触发 DOM 行为的“页面级验证”场景。
+  tags: dvwa,xss,dom,detect,cookie
+
+variables:
+  dvwa_cookie: ""
+  default_payload: English
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/vulnerabilities/xss_d/?default={{default_payload}}"
+    headers:
+      Cookie: "{{dvwa_cookie}}"
+    matchers-condition: and
+    matchers:
+      - type: regex
+        part: body
+        regex:
+          - "Vulnerability:\\s*DOM Based Cross Site Script"
+      - type: word
+        part: body
+        words:
+          - "xss_d"
+

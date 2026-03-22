@@ -1,0 +1,22 @@
+id: DVWA-LOGIN-PAGE-EXPOSED
+
+info:
+  name: DVWA - Login Page Detected
+  author: ai_vuln_scanner
+  severity: info
+  description: |
+    Detects the DVWA login page. Useful for validating scanner pipeline on local lab.
+  tags: dvwa,info,detect
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+      - "{{BaseURL}}/login.php"
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "Damn Vulnerable Web Application"
+          - "DVWA"
+        condition: or

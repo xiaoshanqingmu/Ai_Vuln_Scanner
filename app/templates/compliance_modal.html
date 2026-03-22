@@ -1,0 +1,72 @@
+{# 公网授权靶场合规声明弹窗，基于 Bootstrap 5 #}
+<div class="modal fade" id="complianceModal" tabindex="-1" aria-labelledby="complianceModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title" id="complianceModalLabel">合规声明与授权确认</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <h6 class="fw-bold text-danger">重要提示</h6>
+          <p class="mb-1">
+            本系统仅用于<span class="fw-bold">公网授权靶场</span>的安全测试辅助，例如：
+            <span class="badge bg-secondary">BUUCTF</span>
+            <span class="badge bg-secondary">好靶场</span>
+            等已明确授权的安全练习平台。
+          </p>
+          <p class="mb-1 text-danger fw-semibold">
+            严禁对任何<span class="fw-bold">未取得明确书面授权</span>的真实业务系统、个人网站或第三方服务进行扫描与攻击测试。
+          </p>
+          <p class="small text-muted mb-0">
+            如因使用本系统对未授权目标进行扫描而产生任何法律责任、经济损失或其他后果，均由使用者自行承担。
+          </p>
+        </div>
+
+        <hr />
+
+        <div class="mb-3">
+          <h6 class="fw-bold">合规使用须知</h6>
+          <ul class="small">
+            <li>仅允许对已获得授权的公网靶场目标进行扫描；</li>
+            <li>请严格遵守所在地区的法律法规和平台使用协议；</li>
+            <li>请勿对生产环境、第三方业务系统或未知归属的公网资产进行任何形式的扫描；</li>
+            <li>请合理控制扫描频率，避免对授权靶场造成过大压力；</li>
+            <li>系统会记录任务 ID、目标地址（含端口）、操作时间与操作人等审计信息。</li>
+          </ul>
+        </div>
+
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" value="" id="complianceConfirmCheckbox" />
+          <label class="form-check-label" for="complianceConfirmCheckbox">
+            我已仔细阅读并完全理解上述<span class="fw-bold">合规声明</span>，确认本次扫描目标为<span class="fw-bold">公网授权靶场</span>，并自愿承担全部责任。
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="complianceCancelBtn" type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+          取消
+        </button>
+        <button id="complianceConfirmBtn" type="button" class="btn btn-danger" disabled>
+          我已授权，开始扫描
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const checkbox = document.getElementById('complianceConfirmCheckbox');
+    const confirmBtn = document.getElementById('complianceConfirmBtn');
+
+    if (!checkbox || !confirmBtn) {
+      return;
+    }
+
+    checkbox.addEventListener('change', function () {
+      confirmBtn.disabled = !checkbox.checked;
+    });
+  })();
+</script>
+

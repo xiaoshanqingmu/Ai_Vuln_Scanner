@@ -1,0 +1,25 @@
+id: DVWA-Brute-Auth-Detect
+
+info:
+  name: DVWA - Brute Force - Detection
+  author: ai_vuln_scanner
+  severity: medium
+  description: |
+    登录 DVWA、设置安全等级为 low，然后验证 Brute Force 模块页面的漏洞提示文本。
+  tags: dvwa,brute,detect
+
+variables:
+  dvwa_cookie: ""
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/vulnerabilities/brute/"
+    headers:
+      Cookie: "{{dvwa_cookie}}"
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "Brute Force"
+

@@ -1,0 +1,4 @@
+2026-03-19 21:39:06,522 [INFO] [report] report_generator.py:60 - AI 分析跳过：任务下无漏洞记录 task_id=6e7e8969faaf41d086efb2baa7005d90
+2026-03-19 21:39:06,535 [INFO] [report] report_generator.py:204 - Excel 报告生成成功: task_id=6e7e8969faaf41d086efb2baa7005d90 path=D:\Ai_Vuln_Scanner\reports\excel\渗透测试报告_6e7e8969faaf41d086efb2baa7005d90_http___127.0.0.1_7777_vulnerabilities_sqli.xlsx size=5537 bytes
+2026-03-19 21:39:06,537 [INFO] [report] report_generator.py:60 - AI 分析跳过：任务下无漏洞记录 task_id=6e7e8969faaf41d086efb2baa7005d90
+2026-03-19 21:39:06,644 [WARNING] [report] report_generator.py:275 - WeasyPrint 系统依赖未安装（如 GTK/Cairo），PDF 无法生成: cannot load library 'gobject-2.0-0': error 0x7e.  Additionally, ctypes.util.find_library() did not manage to locate a library called 'gobject-2.0-0'

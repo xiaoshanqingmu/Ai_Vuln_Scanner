@@ -1,0 +1,33 @@
+id: DVWA-XSS-DOM-DETECT
+
+info:
+  name: DVWA - DOM XSS (xss_d) - Detection
+  author: ai_vuln_scanner
+  severity: medium
+  description: |
+    Logs into DVWA, sets security level to low, then loads the DOM XSS module (xss_d).
+    DVWA 的 xss_d 属于 DOM-based XSS，payload 可能不会直接出现在 HTML 响应中，
+    因此这里基于页面内的漏洞提示文字做检测（更稳定的“功能验证”）。
+  tags: dvwa,xss,dom,detect
+
+variables:
+  dvwa_cookie: ""
+  default_payload: English
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/vulnerabilities/xss_d/?default={{default_payload}}"
+    headers:
+      Cookie: "{{dvwa_cookie}}"
+    matchers-condition: and
+    matchers:
+      - type: regex
+        part: body
+        regex:
+          - "Vulnerability:\\s*DOM Based Cross Site Script"
+      - type: word
+        part: body
+        words:
+          - "xss_d"
+

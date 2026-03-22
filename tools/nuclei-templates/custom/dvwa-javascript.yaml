@@ -1,0 +1,25 @@
+id: DVWA-JavaScript-Attacks-Auth-Detect
+
+info:
+  name: DVWA - JavaScript Attacks (javascript) - Detection
+  author: ai_vuln_scanner
+  severity: medium
+  description: |
+    登录 DVWA、设置安全等级为 low，然后验证 JavaScript Attacks（javascript）模块页面的漏洞提示文本。
+  tags: dvwa,javascript,detect
+
+variables:
+  dvwa_cookie: ""
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/vulnerabilities/javascript/"
+    headers:
+      Cookie: "{{dvwa_cookie}}"
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "JavaScript Attacks"
+

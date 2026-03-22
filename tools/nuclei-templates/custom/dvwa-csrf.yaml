@@ -1,0 +1,25 @@
+id: DVWA-CSRF-Auth-Detect
+
+info:
+  name: DVWA - CSRF (csrf) - Detection
+  author: ai_vuln_scanner
+  severity: medium
+  description: |
+    登录 DVWA、设置安全等级为 low，然后验证 Cross Site Request Forgery（CSRF）模块页面的漏洞提示文本。
+  tags: dvwa,csrf,detect
+
+variables:
+  dvwa_cookie: ""
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/vulnerabilities/csrf/"
+    headers:
+      Cookie: "{{dvwa_cookie}}"
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "Cross Site Request Forgery"
+

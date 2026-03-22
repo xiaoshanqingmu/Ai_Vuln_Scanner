@@ -1,0 +1,25 @@
+id: DVWA-Exec-Auth-Detect
+
+info:
+  name: DVWA - Command Injection (exec) - Detection
+  author: ai_vuln_scanner
+  severity: high
+  description: |
+    登录 DVWA、设置安全等级为 low，然后验证 Command Injection（exec）模块页面的漏洞提示文本。
+  tags: dvwa,exec,command-injection,detect
+
+variables:
+  dvwa_cookie: ""
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/vulnerabilities/exec/"
+    headers:
+      Cookie: "{{dvwa_cookie}}"
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "Command Injection"
+

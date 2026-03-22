@@ -1,0 +1,2 @@
+2026-03-19 21:37:16,480 [INFO] [compliance] compliance.py:87 - 未配置白名单，允许扫描: target=http://127.0.0.1:7777/vulnerabilities/sqli
+2026-03-19 21:37:20,620 [INFO] [compliance] compliance.py:87 - 未配置白名单，允许扫描: target=http://127.0.0.1:7777/vulnerabilities/sqli

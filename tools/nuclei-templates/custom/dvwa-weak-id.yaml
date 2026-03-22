@@ -1,0 +1,25 @@
+id: DVWA-WeakSession-Auth-Detect
+
+info:
+  name: DVWA - Weak Session IDs (weak_id) - Detection
+  author: ai_vuln_scanner
+  severity: medium
+  description: |
+    登录 DVWA、设置安全等级为 low，然后验证 Weak Session IDs（weak_id）模块页面的漏洞提示文本。
+  tags: dvwa,weak_id,session,detect
+
+variables:
+  dvwa_cookie: ""
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/vulnerabilities/weak_id/"
+    headers:
+      Cookie: "{{dvwa_cookie}}"
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "Weak Session IDs"
+

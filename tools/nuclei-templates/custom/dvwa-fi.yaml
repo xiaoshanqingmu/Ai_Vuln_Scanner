@@ -1,0 +1,25 @@
+id: DVWA-FI-Auth-Detect
+
+info:
+  name: DVWA - File Inclusion (fi) - Detection
+  author: ai_vuln_scanner
+  severity: high
+  description: |
+    登录 DVWA、设置安全等级为 low，然后验证 File Inclusion（fi）模块页面的漏洞提示文本。
+  tags: dvwa,fi,file-inclusion,detect
+
+variables:
+  dvwa_cookie: ""
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/vulnerabilities/fi/"
+    headers:
+      Cookie: "{{dvwa_cookie}}"
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "File Inclusion"
+
