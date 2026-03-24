@@ -1,4 +1,6 @@
 import logging
+import json
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -61,9 +63,9 @@ def _build_prompt_for_vuln(vuln: Vulnerability) -> str:
     """
     vuln_type = _detect_vuln_type(vuln)
     base_context = (
-        "你是一名资深渗透测试工程师兼安全架构师，需要针对公网授权靶场环境中的漏洞进行深度分析。\n"
-        "请使用专业、安全、合规的语言进行描述，避免输出任何可直接复制执行的完整攻击代码，仅提供 PoC 构造思路。\n"
-        "目标环境为授权靶场（例如 BUUCTF 等），所有分析仅用于教学与防御建设。\n\n"
+        "你是一名资深渗透测试工程师兼安全架构师，需要针对授权测试环境中的漏洞进行深度分析。\n"
+        "请使用专业、安全、合规的语言，不要输出可直接复制执行的完整攻击代码，仅提供 PoC 思路。\n"
+        "必须只输出 JSON，不要输出任何多余文字。\n\n"
     )
 
     common_info = (
@@ -75,46 +77,18 @@ def _build_prompt_for_vuln(vuln: Vulnerability) -> str:
         f"工具描述：{vuln.description or '（无描述）'}\n"
     )
 
-    if vuln_type == "sql_injection":
-        task = (
-            "请从以下三个维度对该 SQL 注入相关漏洞进行分析：\n"
-            "1. 攻击原理：说明 SQL 注入产生的根本原因、典型利用方式，以及在授权靶场中的常见利用路径；\n"
-            "2. PoC 思路：给出构造注入 payload 的思路和步骤（例如如何区分数字型/字符型注入、如何利用报错/盲注等），"
-            "但不要给出可直接复制执行的完整 payload；\n"
-            "3. 定制化修复建议：结合上述 URL 和参数名称，例如“针对 {url} 的 {param} 参数”，"
-            "给出基于预编译语句、输入校验、最小权限等多层防护建议。\n"
-        ).format(url=vuln.url, param=vuln.param or "相关")
-    elif vuln_type == "xss":
-        task = (
-            "请从以下三个维度对该 XSS 相关漏洞进行分析：\n"
-            "1. 攻击原理：说明反射型/存储型/DOM 型 XSS 的产生原因及差异；\n"
-            "2. PoC 思路：给出构造 XSS payload 的思路（如如何测试输出点、如何识别过滤规则），"
-            "但不要给出完整可执行的 JS 代码；\n"
-            "3. 定制化修复建议：结合上述 URL 和参数名称，例如“针对 {url} 的 {param} 参数”，"
-            "说明输出编码、白名单校验、内容安全策略（CSP）等防护措施。\n"
-        ).format(url=vuln.url, param=vuln.param or "相关")
-    elif vuln_type == "ssrf":
-        task = (
-            "请从以下三个维度对该 SSRF 相关漏洞进行分析：\n"
-            "1. 攻击原理：说明 SSRF 如何利用服务器对外/对内发起请求的能力，以及在靶场中的典型利用目标；\n"
-            "2. PoC 思路：给出探测内网/云元数据服务的思路，但不要给出具体内网地址或可直接利用的 URL；\n"
-            "3. 定制化修复建议：结合上述 URL 和参数名称，例如“针对 {url} 的 {param} 参数”，"
-            "说明如何做协议/地址白名单、DNS 解析限制、请求超时和重定向控制。\n"
-        ).format(url=vuln.url, param=vuln.param or "相关")
-    elif vuln_type == "file_upload":
-        task = (
-            "请从以下三个维度对该文件上传相关漏洞进行分析：\n"
-            "1. 攻击原理：说明任意文件上传、类型绕过、路径穿越等风险；\n"
-            "2. PoC 思路：给出上传恶意文件的一般思路（如扩展名绕过、MIME 绕过），"
-            "但不要提供完整的木马脚本内容；\n"
-            "3. 定制化修复建议：结合上述 URL 和参数名称，例如“针对 {url} 的上传接口”，"
-            "说明文件类型白名单、内容检测、存储路径隔离等措施。\n"
-        ).format(url=vuln.url)
-    else:
-        task = (
-            "请根据上述信息，从攻击原理、PoC 思路（不包含完整可执行代码）和防御建议三个角度，"
-            "对该漏洞给出简明但有深度的分析，并尽量结合 URL 与参数名称给出定制化修复建议。\n"
-        )
+    task = (
+        "请输出如下 JSON（字段名固定，值必须为中文字符串）：\n"
+        "{\n"
+        '  "attack_principle": "漏洞攻击原理（简明但具体）",\n'
+        '  "possible_causes": "可能成因（结合 URL/参数）",\n'
+        '  "poc_outline": "PoC 验证思路（不含可直接执行代码）",\n'
+        '  "attack_chain": "该漏洞在攻击链中的位置与影响",\n'
+        '  "custom_fix": "定制化修复建议（分点描述）"\n'
+        "}\n"
+        f"漏洞类型参考：{vuln_type}\n"
+        "如果信息不足，请明确写“信息不足”并给出保守建议，禁止留空。\n"
+    )
 
     return base_context + common_info + "\n" + task
 
@@ -138,10 +112,11 @@ def _build_prompt_for_attack_chain(task_id: str, vulns: List[Vulnerability]) -> 
     detail = "\n".join(detail_lines) if detail_lines else "（当前任务下未找到漏洞记录）"
 
     tail = (
-        "\n\n请输出内容包括：\n"
-        "1. 可能的攻击链条示意（例如：信息收集 -> 弱口令 -> 文件上传 -> RCE 等）；\n"
-        "2. 该攻击链在真实业务中的潜在影响（机密性/完整性/可用性）；\n"
-        "3. 针对本次任务（task_id={task_id}）的整改优先级与分阶段修复建议。\n"
+        "\n\n请用 3 个小节输出：\n"
+        "【攻击链条】\n"
+        "【业务影响】\n"
+        "【修复优先级】\n"
+        "并针对 task_id={task_id} 给出分阶段整改建议（短期/中期/长期）。\n"
     ).format(task_id=task_id)
 
     return base + "漏洞列表：\n" + detail + tail
@@ -240,6 +215,39 @@ def _fallback_analysis(vuln: Vulnerability) -> Tuple[str, str, str]:
     return attack_principle, poc_suggestion, custom_fix
 
 
+def _parse_structured_analysis(output_text: str) -> Dict[str, str]:
+    """
+    尝试将 AI 输出解析为结构化字段；失败时返回空字典。
+    """
+    text = (output_text or "").strip()
+    if not text:
+        return {}
+
+    # 优先提取 ```json ... ``` 代码块
+    m = re.search(r"```json\s*(\{.*?\})\s*```", text, flags=re.S | re.I)
+    if m:
+        text = m.group(1).strip()
+    else:
+        # 次优：提取首个 JSON 对象
+        m2 = re.search(r"(\{.*\})", text, flags=re.S)
+        if m2:
+            text = m2.group(1).strip()
+
+    try:
+        data = json.loads(text)
+    except Exception:  # noqa: BLE001
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    normalized: Dict[str, str] = {}
+    for key in ("attack_principle", "possible_causes", "poc_outline", "attack_chain", "custom_fix"):
+        value = data.get(key, "")
+        normalized[key] = str(value).strip() if value is not None else ""
+    return normalized
+
+
 def analyze_vulnerability(vuln_id: int, vuln_data: Optional[Vulnerability] = None) -> Tuple[bool, str]:
     """
     针对单个漏洞执行 AI 深度分析。
@@ -274,10 +282,22 @@ def analyze_vulnerability(vuln_id: int, vuln_data: Optional[Vulnerability] = Non
         ok, output_text = _call_qwen_api(prompt)
 
         if ok:
-            # 这里简单将整段输出同时填入三个字段，实际可按段落拆分
-            attack_principle = output_text
-            poc_suggestion = "基于上述分析内容，提炼 PoC 构造思路（不含完整代码）。"
-            custom_fix = "基于上述分析内容，提炼定制化修复建议。"
+            parsed = _parse_structured_analysis(output_text)
+            if parsed:
+                attack_principle = (
+                    f"攻击原理：{parsed.get('attack_principle') or '信息不足'}\n"
+                    f"可能成因：{parsed.get('possible_causes') or '信息不足'}"
+                )
+                poc_suggestion = (
+                    f"PoC 思路：{parsed.get('poc_outline') or '信息不足'}\n"
+                    f"攻击链位置：{parsed.get('attack_chain') or '信息不足'}"
+                )
+                custom_fix = parsed.get("custom_fix") or "信息不足，建议先进行输入校验与最小权限加固。"
+            else:
+                # 保底：即使返回不是 JSON，也保留原始分析而不是模板化占位
+                attack_principle = output_text
+                poc_suggestion = "AI 返回非结构化结果，已保留原文，请人工补充 PoC 条目。"
+                custom_fix = "AI 返回非结构化结果，建议按输入校验、编码、权限控制三层修复。"
         else:
             attack_principle, poc_suggestion, custom_fix = _fallback_analysis(vuln)
 

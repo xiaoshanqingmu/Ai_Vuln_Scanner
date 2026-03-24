@@ -13,6 +13,7 @@ from app import create_app
 from config.settings import REQUEST_DELAY
 from config.settings import DNSLOG_BASE_URL, DNSLOG_COOKIE
 from config.settings import DVWA_COOKIE
+from config.settings import SCAN_PROFILE
 from core.dnslog_client import DNSLogClient
 from core.report_generator import generate_excel_report, generate_pdf_report
 from core.url_collector import GauCollector
@@ -23,6 +24,19 @@ logger = logging.getLogger("scan")
 
 # 为 Celery 任务创建独立的 Flask 应用上下文
 flask_app = create_app()
+
+
+def _resolve_scan_profile(domain: str) -> str:
+    """
+    解析当前任务应使用的扫描模式：public / dvwa。
+    """
+    mode = (SCAN_PROFILE or "auto").strip().lower()
+    if mode in {"public", "dvwa"}:
+        return mode
+    s = (domain or "").lower()
+    if "127.0.0.1" in s or "localhost" in s or ":7777" in s:
+        return "dvwa"
+    return "public"
 
 
 def _extract_dvwa_token(html: str) -> str:
@@ -150,12 +164,12 @@ def run_full_scan(self, task_id: str, domain: str) -> str:
             watchdog = _start_stage_watchdog(task_id, max_scanning_seconds=1200)
 
             # 1. URL 收集
-            # 本机 DVWA：gau 可能对本地回环长时间阻塞，直接降级并尽快进入 nuclei
-            local_dvwa = isinstance(domain, str) and (":7777" in domain or "127.0.0.1" in domain or "localhost" in domain)
+            scan_profile = _resolve_scan_profile(domain)
+            local_dvwa = scan_profile == "dvwa"
             collector = GauCollector(
                 domain,
-                timeout=10 if local_dvwa else 300,
-                max_retry=0 if local_dvwa else 2,
+                timeout=10 if local_dvwa else 45,
+                max_retry=0 if local_dvwa else 1,
             )
             ok, urls, msg = collector.collect_and_filter(verify_http=False)
             if not ok or not urls:
@@ -166,19 +180,21 @@ def run_full_scan(self, task_id: str, domain: str) -> str:
 
             logger.info("URL 收集完成: task_id=%s url_count=%s", task_id, len(urls))
             # 防卡死：限制 URL 数量，避免对大型站点任务跑很久
-            if len(urls) > 100:
-                urls = urls[:100]
-                logger.info("URL 数量过多，已截断为 100 条: task_id=%s", task_id)
+            max_urls = 40 if local_dvwa else 60
+            if len(urls) > max_urls:
+                urls = urls[:max_urls]
+                logger.info("URL 数量过多，已截断为 %s 条: task_id=%s", max_urls, task_id)
 
             # 2. 漏洞扫描
             nuclei_vars = {}
-            # DVWA cookie-only：优先使用配置的 DVWA_COOKIE；否则自动登录生成
-            if DVWA_COOKIE:
-                nuclei_vars["dvwa_cookie"] = DVWA_COOKIE
-            else:
-                auto_cookie = _dvwa_prepare_cookie(domain)
-                if auto_cookie:
-                    nuclei_vars["dvwa_cookie"] = auto_cookie
+            # DVWA cookie-only：仅 dvwa 模式才注入 cookie 变量，避免污染公网模板变量
+            if scan_profile == "dvwa":
+                if DVWA_COOKIE:
+                    nuclei_vars["dvwa_cookie"] = DVWA_COOKIE
+                else:
+                    auto_cookie = _dvwa_prepare_cookie(domain)
+                    if auto_cookie:
+                        nuclei_vars["dvwa_cookie"] = auto_cookie
             # 若配置了 dnslog.cn，则为 Log4j 模板注入 tag/domain 变量，便于回连确认
             if DNSLOG_COOKIE:
                 try:
@@ -190,7 +206,12 @@ def run_full_scan(self, task_id: str, domain: str) -> str:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("DNSLog 获取域名失败，将跳过 Log4j 回连确认: %s", exc)
 
-            ok, summary, msg = engine_scan_urls(task_id=task_id, urls=urls, nuclei_vars=nuclei_vars)
+            ok, summary, msg = engine_scan_urls(
+                task_id=task_id,
+                urls=urls,
+                nuclei_vars=nuclei_vars,
+                scan_profile=scan_profile,
+            )
             logger.info(
                 "漏洞扫描结果: task_id=%s ok=%s summary=%s msg=%s",
                 task_id,
@@ -256,11 +277,12 @@ def run_full_scan_sync(task_id: str, domain: str) -> str:
             _update_task_status(task_id, "scanning")
             watchdog = _start_stage_watchdog(task_id, max_scanning_seconds=1200)
 
-            local_dvwa = isinstance(domain, str) and (":7777" in domain or "127.0.0.1" in domain or "localhost" in domain)
+            scan_profile = _resolve_scan_profile(domain)
+            local_dvwa = scan_profile == "dvwa"
             collector = GauCollector(
                 domain,
-                timeout=10 if local_dvwa else 300,
-                max_retry=0 if local_dvwa else 2,
+                timeout=10 if local_dvwa else 45,
+                max_retry=0 if local_dvwa else 1,
             )
             ok, urls, msg = collector.collect_and_filter(verify_http=False)
             if not ok or not urls:
@@ -270,17 +292,19 @@ def run_full_scan_sync(task_id: str, domain: str) -> str:
                 return f"URL 收集失败：{msg}"
 
             logger.info("URL 收集完成: task_id=%s url_count=%s", task_id, len(urls))
-            if len(urls) > 100:
-                urls = urls[:100]
-                logger.info("URL 数量过多，已截断为 100 条: task_id=%s", task_id)
+            max_urls = 40 if local_dvwa else 60
+            if len(urls) > max_urls:
+                urls = urls[:max_urls]
+                logger.info("URL 数量过多，已截断为 %s 条: task_id=%s", max_urls, task_id)
 
             nuclei_vars = {}
-            if DVWA_COOKIE:
-                nuclei_vars["dvwa_cookie"] = DVWA_COOKIE
-            else:
-                auto_cookie = _dvwa_prepare_cookie(domain)
-                if auto_cookie:
-                    nuclei_vars["dvwa_cookie"] = auto_cookie
+            if scan_profile == "dvwa":
+                if DVWA_COOKIE:
+                    nuclei_vars["dvwa_cookie"] = DVWA_COOKIE
+                else:
+                    auto_cookie = _dvwa_prepare_cookie(domain)
+                    if auto_cookie:
+                        nuclei_vars["dvwa_cookie"] = auto_cookie
             if DNSLOG_COOKIE:
                 try:
                     client = DNSLogClient(base_url=DNSLOG_BASE_URL, cookie=DNSLOG_COOKIE)
@@ -291,7 +315,12 @@ def run_full_scan_sync(task_id: str, domain: str) -> str:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("DNSLog 获取域名失败，将跳过 Log4j 回连确认: %s", exc)
 
-            ok, summary, msg = engine_scan_urls(task_id=task_id, urls=urls, nuclei_vars=nuclei_vars)
+            ok, summary, msg = engine_scan_urls(
+                task_id=task_id,
+                urls=urls,
+                nuclei_vars=nuclei_vars,
+                scan_profile=scan_profile,
+            )
             logger.info("漏洞扫描结果: task_id=%s ok=%s summary=%s", task_id, ok, summary)
             if not ok:
                 _update_task_status(task_id, "failed")

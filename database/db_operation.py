@@ -152,6 +152,28 @@ def add_vulnerability(
     """
     try:
         normalized_risk = risk_level.lower()
+        # 去重：同一任务下同一工具+漏洞名+URL+参数只保留一条，减少 AI 重复分析与报告噪声。
+        existed = (
+            Vulnerability.query.filter_by(
+                task_id=task_id,
+                tool=tool,
+                vuln_name=vuln_name,
+                url=url,
+                param=param,
+            )
+            .order_by(Vulnerability.id.desc())
+            .first()
+        )
+        if existed:
+            logger.info(
+                "漏洞记录去重命中，跳过重复写入: task_id=%s tool=%s vuln_name=%s url=%s",
+                task_id,
+                tool,
+                vuln_name,
+                url,
+            )
+            return True, existed, "重复漏洞已跳过"
+
         vulnerability = Vulnerability(
             task_id=task_id,
             tool=tool,

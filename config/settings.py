@@ -113,6 +113,12 @@ QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-plus")
 # 公网扫描相关配置
 # =========================
 
+# 扫描模式：
+# - auto  : 自动识别（本机 127.0.0.1:7777 走 dvwa，其他走 public）
+# - public: 仅公网流程（CVE/通用模板，默认可启用 ZAP）
+# - dvwa  : 仅 DVWA 流程（dvwa 模板 + cookie 登录链路）
+SCAN_PROFILE = os.getenv("SCAN_PROFILE", "auto").strip().lower()
+
 # 请求延迟（秒），用于控制对公网目标的访问频率，避免触发风控
 # TODO: 根据实际授权与对方要求调整，建议 >= 1 秒
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "1.0"))

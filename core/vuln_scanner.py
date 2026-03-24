@@ -14,6 +14,7 @@ from zapv2 import ZAPv2
 
 from config.settings import (
     NUCLEI_PATH,
+    NUCLEI_TEMPLATES_DIR,
     NUCLEI_TARGETED_TEMPLATES,
     DNSLOG_BASE_URL,
     DNSLOG_COOKIE,
@@ -368,6 +369,7 @@ class NucleiScanner:
         retries: int = 2,
         timeout: int = 600,
         nuclei_vars: Optional[Dict[str, str]] = None,
+        scan_profile: str = "auto",
     ) -> None:
         """
         :param nuclei_path: nuclei.exe 路径
@@ -383,6 +385,7 @@ class NucleiScanner:
         # 对于“疑似卡死/极慢”的目标，给每个目标一个硬性上限，避免长时间占用进程
         self.max_urls = 50
         self.nuclei_vars = nuclei_vars or {}
+        self.scan_profile = (scan_profile or "auto").strip().lower()
 
     def scan_urls(self, urls: List[str]) -> Tuple[bool, List[VulnItem], str]:
         """
@@ -412,7 +415,15 @@ class NucleiScanner:
         ]
 
         # 若配置了定向模板，则优先使用（用于 CVE 定向快速验证，避免泛扫耗时）
-        targeted = [p for p in (NUCLEI_TARGETED_TEMPLATES or []) if p and isinstance(p, str)]
+        # 公网目标时剔除 DVWA 专用模板，避免无意义匹配拖慢流程。
+        targeted = []
+        for p in (NUCLEI_TARGETED_TEMPLATES or []):
+            if not p or not isinstance(p, str):
+                continue
+            name = os.path.basename(p).lower()
+            if name.startswith("dvwa-"):
+                continue
+            targeted.append(p)
         # 本地 DVWA：直接加载所有 dvwa-* 模板，避免 settings 顺序/缓存导致模块未执行
         first = urls[0] if urls else ""
         try:
@@ -422,9 +433,12 @@ class NucleiScanner:
         except Exception:  # noqa: BLE001
             host0, port0 = "", None
 
-        is_local_dvwa = host0 in ("127.0.0.1", "localhost") and (
+        auto_is_local_dvwa = host0 in ("127.0.0.1", "localhost") and (
             port0 == 7777 or (isinstance(first, str) and ":7777" in first)
         )
+        profile_is_dvwa = self.scan_profile == "dvwa"
+        profile_is_public = self.scan_profile == "public"
+        is_local_dvwa = profile_is_dvwa or (not profile_is_public and auto_is_local_dvwa)
         if is_local_dvwa:
             dvwa_custom_dir = os.path.join(NUCLEI_TEMPLATES_DIR, "custom")
             dvwa_templates = sorted(
@@ -542,7 +556,12 @@ class NucleiScanner:
                     pass
 
 
-def scan_urls(task_id: str, urls: List[str], nuclei_vars: Optional[Dict[str, str]] = None) -> Tuple[bool, Dict[str, Any], str]:
+def scan_urls(
+    task_id: str,
+    urls: List[str],
+    nuclei_vars: Optional[Dict[str, str]] = None,
+    scan_profile: str = "auto",
+) -> Tuple[bool, Dict[str, Any], str]:
     """
     统一的双引擎扫描入口。
 
@@ -571,7 +590,8 @@ def scan_urls(task_id: str, urls: List[str], nuclei_vars: Optional[Dict[str, str
     started = time.time()
     logger.info("双引擎扫描开始: task_id=%s urls=%s", task_id, len(urls))
 
-    nuclei_scanner = NucleiScanner(task_id=task_id, nuclei_vars=nuclei_vars or {})
+    mode = (scan_profile or "auto").strip().lower()
+    nuclei_scanner = NucleiScanner(task_id=task_id, nuclei_vars=nuclei_vars or {}, scan_profile=mode)
     zap_scanner = ZapScanner(
         api_url=ZAP_API_URL,
         api_key=ZAP_API_KEY,
@@ -624,13 +644,15 @@ def scan_urls(task_id: str, urls: List[str], nuclei_vars: Optional[Dict[str, str
     except Exception as exc:  # noqa: BLE001
         logger.warning("DNSLog 二次确认异常（忽略不影响任务完成）: %s", exc)
 
-    # ZAP 扫描：本机 DVWA（127.0.0.1:7777）只做 nuclei 以加快报告产出
-    # 更鲁棒：只要是本机 DVWA，就不做 ZAP（避免长时间卡住）
+    # ZAP 扫描：dvwa 模式直接跳过；public/auto 根据 URL 判断是否跳过本机回环目标
     skip_zap = False
     try:
-        sample = urls[:10] if urls else []
-        if any(isinstance(u, str) and (":7777" in u or "127.0.0.1" in u or "localhost" in u) for u in sample):
+        if mode == "dvwa":
             skip_zap = True
+        else:
+            sample = urls[:10] if urls else []
+            if any(isinstance(u, str) and (":7777" in u or "127.0.0.1" in u or "localhost" in u) for u in sample):
+                skip_zap = True
     except Exception:  # noqa: BLE001
         skip_zap = False
 
