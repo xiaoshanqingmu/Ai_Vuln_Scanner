@@ -58,6 +58,26 @@ NUCLEI_TARGETED_TEMPLATES = [
     os.path.join(NUCLEI_TEMPLATES_DIR, "custom", "dvwa-javascript.yaml"),
 ]
 
+# 公网模板目录（用于 public/cms 等场景，避免只靠少量定向模板导致命中率过低）
+NUCLEI_PUBLIC_TEMPLATE_DIRS = [
+    os.path.join(NUCLEI_TEMPLATES_DIR, "vulnerabilities"),
+    os.path.join(NUCLEI_TEMPLATES_DIR, "misconfiguration"),
+    os.path.join(NUCLEI_TEMPLATES_DIR, "exposed-panels"),
+    os.path.join(NUCLEI_TEMPLATES_DIR, "exposures"),
+]
+
+# CMS/靶场快速模式：先跑“暴露面+配置类”模板，通常能更快命中并给出可解释证据
+NUCLEI_CMS_TEMPLATE_DIRS = [
+    os.path.join(NUCLEI_TEMPLATES_DIR, "misconfiguration"),
+    os.path.join(NUCLEI_TEMPLATES_DIR, "exposed-panels"),
+    os.path.join(NUCLEI_TEMPLATES_DIR, "exposures"),
+    os.path.join(NUCLEI_TEMPLATES_DIR, "vulnerabilities"),
+    os.path.join(NUCLEI_TEMPLATES_DIR, "default-logins"),
+]
+
+# AI 分析的条目上限（避免 analyzing 阶段因漏洞数量过多而过慢）
+MAX_AI_VULN_PER_TASK = int(os.getenv("MAX_AI_VULN_PER_TASK", "30"))
+
 # =========================
 # DNSLog（用于 Log4j OAST 回连确认）
 # =========================
@@ -88,6 +108,13 @@ ZAP_API_URL = os.getenv("ZAP_API_URL", "http://127.0.0.1:8080")
 ZAP_API_KEY = os.getenv("ZAP_API_KEY", "96lr8a8ujkh6ncad62qemko3db")
 # ZAP 扫描超时时间（秒），避免扫描卡死
 ZAP_SCAN_TIMEOUT = int(os.getenv("ZAP_SCAN_TIMEOUT", "300"))
+
+# =========================
+# CMS（YXCMS）登录配置（用于 ZAP 认证爬虫/主动扫描）
+# =========================
+YXCMS_ADMIN_USER = os.getenv("YXCMS_ADMIN_USER", "admin")
+YXCMS_ADMIN_PASS = os.getenv("YXCMS_ADMIN_PASS", "123456")
+YXCMS_LOGIN_PATH = os.getenv("YXCMS_LOGIN_PATH", "/index.php?r=admin/login/index")
 
 # =========================
 # 通义千问 API 配置

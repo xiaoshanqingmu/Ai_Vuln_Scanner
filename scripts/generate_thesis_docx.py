@@ -576,21 +576,19 @@ def add_references(doc: Document) -> None:
     spacer.add_run(" ")
 
     refs = [
-        "[1] OWASP Foundation. OWASP ZAP User Guide[M]. 2024.",
-        "[2] ProjectDiscovery. Nuclei Documentation[EB/OL]. https://docs.projectdiscovery.io.",
-        "[3] Stallings W. Network Security Essentials[M]. Pearson, 2021.",
-        "[4] 李刚. Flask Web开发实战[M]. 北京: 机械工业出版社, 2022.",
-        "[5] 王勇, 周涛. Web应用漏洞检测技术综述[J]. 网络安全技术与应用, 2023(7):12-18.",
-        "[6] OWASP. Top 10 Web Application Security Risks[R]. 2021.",
-        "[7] 陈立, 赵晨. 基于模板引擎的漏洞自动化检测研究[J]. 信息网络安全, 2022(5):43-51.",
-        "[8] Vaswani A, et al. Attention Is All You Need[C]. NeurIPS, 2017.",
-        "[9] OpenAI. Prompt Engineering Best Practices[EB/OL]. 2024.",
-        "[10] 张楠, 刘毅. 大模型在安全分析场景中的应用挑战[J]. 软件学报, 2024, 35(9): 1-15.",
-        "[11] Digininja. Damn Vulnerable Web Application[EB/OL]. https://github.com/digininja/DVWA.",
-        "[12] 郑明. 软件工程中的降级设计与容错机制[M]. 北京: 清华大学出版社, 2021.",
-        "[13] 徐亮, 孙浩. 安全测试结果去重策略研究[J]. 计算机工程, 2023, 49(11):90-99.",
-        "[14] 周鹏. 网络空间安全法律法规与合规实践[M]. 北京: 法律出版社, 2022.",
-        "[15] 胡博. 自动化渗透测试平台设计与实现[D]. 某高校硕士论文, 2023.",
+        "[1] 黄松, 方勇. 专栏评述：大模型在网络安全漏洞挖掘中的创新应用前沿进展[J/OL]. 四川大学学报(自然科学版), 2026,(02):239-240[2026-03-26]. https://doi.org/10.19907/j.0490-6756.250364.",
+        "[2] 马志远. 人工智能在网络安全中的应用[J]. 信息记录材料, 2026,27(06):96-98. DOI:10.16009/j.issn.1009-5624.2026.06.032.",
+        "[3] 李俞彤. 大数据平台安全漏洞挖掘与智能化防护策略优化[J]. 中国电子商情, 2026,32(04):136-138.",
+        "[4] 王金翔, 朱亚运, 刘万大山, 等. 一种面向快速Web漏洞扫描的网页爬取方法[J]. 计算机应用与软件, 2026,43(01):370-376.",
+        "[5] 朱小健, 吴光明, 陆鑫涛. 基于Flask框架的安卓App漏洞检查系统[J]. 电脑知识与技术, 2025,21(17):96-98. DOI:10.14004/j.cnki.ckt.2025.0801.",
+        "[6] 任冀湘, 王君诚, 程稷. 基于攻击路径的网络漏洞检测系统探析[J]. 网络安全和信息化, 2025,(03):40-42.",
+        "[7] 殷庆荣, 王国伟. 网络安全漏洞扫描与修复自动化技术研究[J]. 智能物联技术, 2024,56(03):38-41. DOI:10.26921/j.cnki.2096-6059.2024.03.010.",
+        "[8] 刘木友. DVWA网络空间安全实验环境搭建[J]. 无线互联科技, 2023,20(14):138-140.",
+        "[9] Dawei X, Tianxin C, Zhonghua T, et al. Web Vulnerability Detection Analyzer Based on Python[J]. International Journal of Digital Crime and Forensics (IJDCF), 2022,14(2):1-17. DOI:10.4018/IJDCF.302875.",
+        "[10] 张锦圣. 基于爬虫的Web应用安全的漏洞扫描与检测[D]. 西安电子科技大学, 2019. DOI:10.27389/d.cnki.gxadu.2019.000480.",
+        "[11] 陈晶洁. 高性能Web应用漏洞扫描系统的设计与实现[D]. 北京邮电大学, 2019.",
+        "[12] XIAO Y, YANG H, LIN N, et al. Research and Design of Network Version Vulnerability Scanning System Based on WEB[C]//Proceedings of the 2nd International Conference on Artificial Intelligence and Engineering Applications (AIEA 2017). 2017:552-556.",
+        "[13] He H, Chen L, Guo W. Research on Web Application Vulnerability Scanning System based on Fingerprint Feature[C]//Proceedings of the 2017 International Conference on Mechanical, Electronic, Control and Automation Engineering (MECAE 2017). 2017:161-166.",
     ]
     for item in refs:
         p = doc.add_paragraph()

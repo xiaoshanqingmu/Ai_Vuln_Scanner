@@ -10,6 +10,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app import db
 from config.settings import BASE_DIR
+from config.settings import MAX_AI_VULN_PER_TASK
 from core.ai_analyzer import analyze_attack_chain, analyze_vulnerability
 from database.db_operation import get_vulnerabilities_by_task_id
 from database.models import ScanTask, Vulnerability
@@ -60,6 +61,9 @@ def _run_ai_analysis_for_task(task_id: str) -> None:
             logger.info("AI 分析跳过：任务下无漏洞记录 task_id=%s", task_id)
             return
 
+        # 防止漏洞过多导致 AI 阶段耗时过长
+        vulns = vulns[: max(1, int(MAX_AI_VULN_PER_TASK))]
+
         for v in vulns:
             try:
                 analyze_vulnerability(vuln_id=v.id, vuln_data=v)
@@ -102,7 +106,11 @@ def generate_excel_report(task_id: str, output_path: str) -> Tuple[bool, str]:
     """
     try:
         # 在生成报告前先运行一次 AI 分析，用于丰富报告内容
-        _run_ai_analysis_for_task(task_id)
+        # AI 分析失败/超时不应阻塞 Excel 报告导出
+        try:
+            _run_ai_analysis_for_task(task_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AI 分析异常，继续生成 Excel 报告: task_id=%s err=%s", task_id, exc)
 
         task, vulns = _get_task_and_vulns(task_id)
         if not task:

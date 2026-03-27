@@ -44,11 +44,13 @@ def _normalize_target(raw: str) -> str:
         # 例如：/dvwa/index.php -> /dvwa；/index.php -> /
         path = parts.path or ""
 
-        # DVWA：漏洞模块通常以 /vulnerabilities/* 形式提供，
-        # 对 nuclei/ZAP 我们更倾向于把 BaseURL 统一到“站点根”，
-        # 让模板自行拼接具体漏洞路径，避免 path 被当成 host/base_path 导致拼接错误。
+        # DVWA：若输入是 .../vulnerabilities/*，回退到站点或子目录根。
+        # 例如：
+        # - http://127.0.0.1:7777/vulnerabilities/sqli/ -> http://127.0.0.1:7777
+        # - http://127.0.0.1/dvwa/vulnerabilities/sqli/ -> http://127.0.0.1/dvwa
         if "/vulnerabilities/" in path.lower():
-            path = ""
+            idx = path.lower().find("/vulnerabilities/")
+            path = path[:idx]
 
         if path and not path.endswith("/"):
             last = path.rsplit("/", 1)[-1]
